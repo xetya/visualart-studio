@@ -1,0 +1,1642 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VisuArt Studio</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&display=swap" rel="stylesheet">
+<!-- mp4-muxer for true MP4 muxing (paired with WebCodecs VideoEncoder) -->
+<script src="https://cdn.jsdelivr.net/npm/mp4-muxer@5.0.0/build/mp4-muxer.js"></script>
+
+<style>
+/* ============================================================
+   DESIGN TOKENS
+   ============================================================ */
+:root {
+  --bg:        #07070e;
+  --bg2:       #0d0d1a;
+  --surface:   rgba(255,255,255,0.035);
+  --surfaceHov:rgba(255,255,255,0.065);
+  --border:    rgba(255,255,255,0.07);
+  --text:      #dde1f0;
+  --muted:     #555878;
+  --accent:    #a78bfa;      /* violet */
+  --accent2:   #38bdf8;      /* sky */
+  --green:     #4ade80;
+  --red:       #f87171;
+  --radius:    14px;
+  --radius-sm: 8px;
+  --mono:      'Space Mono', monospace;
+  --sans:      'DM Sans', sans-serif;
+  --shadow:    0 8px 32px rgba(0,0,0,0.6);
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* ---- noise grain overlay ---- */
+body::before {
+  content: '';
+  position: fixed; inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+  background-size: 256px 256px;
+  pointer-events: none;
+  z-index: 1000;
+  opacity: 0.4;
+}
+
+/* ============================================================
+   LAYOUT
+   ============================================================ */
+.app {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  grid-template-rows: 56px 1fr;
+  grid-template-areas:
+    "header header"
+    "canvas  panel";
+  min-height: 100vh;
+  gap: 0;
+}
+
+/* ---- HEADER ---- */
+header {
+  grid-area: header;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(7,7,14,0.8);
+  backdrop-filter: blur(12px);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+.logo-mark {
+  width: 28px; height: 28px;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  border-radius: 7px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 700;
+  color: #fff;
+  font-family: var(--mono);
+  flex-shrink: 0;
+}
+.logo-text {
+  font-family: var(--mono);
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  color: var(--text);
+}
+.logo-text span { color: var(--muted); }
+
+.header-badge {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 8px;
+}
+
+/* ---- CANVAS AREA ---- */
+.canvas-area {
+  grid-area: canvas;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 24px;
+  gap: 16px;
+  overflow-y: auto;
+}
+
+.canvas-wrap {
+  position: relative;
+  width: 100%;
+  max-width: 960px;
+  aspect-ratio: 16/9;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: #000;
+  box-shadow: var(--shadow), 0 0 0 1px var(--border);
+}
+
+#glCanvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  cursor: default;
+}
+
+/* upload overlay on canvas */
+.canvas-overlay {
+  position: absolute; inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(7,7,14,0.85);
+  backdrop-filter: blur(4px);
+  cursor: pointer;
+  transition: background 0.2s;
+  gap: 12px;
+}
+.canvas-overlay:hover { background: rgba(7,7,14,0.75); }
+.canvas-overlay.hidden { display: none; }
+
+.upload-icon {
+  width: 56px; height: 56px;
+  border: 2px dashed rgba(167,139,250,0.4);
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 22px;
+  color: var(--accent);
+  transition: border-color 0.2s, transform 0.2s;
+}
+.canvas-overlay:hover .upload-icon {
+  border-color: var(--accent);
+  transform: scale(1.05);
+}
+.upload-label {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+.upload-hint {
+  font-size: 11px;
+  color: rgba(85,88,120,0.7);
+  font-family: var(--mono);
+}
+
+/* progress bar overlay during export */
+.export-overlay {
+  position: absolute; inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(7,7,14,0.9);
+  backdrop-filter: blur(8px);
+  gap: 16px;
+  z-index: 10;
+}
+.export-overlay.hidden { display: none; }
+.export-title {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  color: var(--accent);
+}
+.progress-bar-wrap {
+  width: 260px;
+  height: 3px;
+  background: rgba(255,255,255,0.08);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.progress-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--accent2));
+  width: 0%;
+  transition: width 0.1s;
+  border-radius: 2px;
+}
+.export-status {
+  font-size: 12px;
+  color: var(--muted);
+  font-family: var(--mono);
+}
+
+/* canvas bottom info bar */
+.canvas-info {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  max-width: 960px;
+}
+.info-pill {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 9px;
+}
+.info-pill.active { color: var(--green); border-color: rgba(74,222,128,0.25); }
+.palette-preview {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.palette-swatch {
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  border: 2px solid rgba(255,255,255,0.1);
+  transition: transform 0.2s;
+  cursor: default;
+}
+.palette-swatch:hover { transform: scale(1.3); }
+
+/* ---- RIGHT PANEL ---- */
+.panel {
+  grid-area: panel;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border-left: 1px solid var(--border);
+  background: var(--bg2);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+/* panel sections */
+.p-section {
+  border-bottom: 1px solid var(--border);
+  padding: 18px 20px;
+}
+.p-section-title {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+  text-transform: uppercase;
+  margin-bottom: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.p-section-title::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+/* upload area in panel */
+.upload-area {
+  border: 1.5px dashed var(--border);
+  border-radius: var(--radius-sm);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+  text-align: center;
+}
+.upload-area:hover {
+  border-color: var(--accent);
+  background: rgba(167,139,250,0.04);
+}
+.upload-area.has-image {
+  border-style: solid;
+  border-color: rgba(167,139,250,0.3);
+}
+.album-thumb {
+  width: 72px; height: 72px;
+  border-radius: 8px;
+  object-fit: cover;
+  display: none;
+}
+.album-thumb.visible { display: block; }
+.upload-area-icon { font-size: 24px; color: var(--muted); }
+.upload-area-text { font-size: 12px; color: var(--muted); }
+.upload-area-hint { font-size: 11px; color: rgba(85,88,120,0.6); font-family: var(--mono); }
+
+/* controls */
+.control-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+.control-row:last-child { margin-bottom: 0; }
+.control-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: var(--text);
+}
+.control-value {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--accent);
+}
+input[type=range] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  background: var(--surface);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  box-shadow: 0 0 0 3px rgba(167,139,250,0.15);
+  transition: box-shadow 0.15s;
+}
+input[type=range]::-webkit-slider-thumb:hover {
+  box-shadow: 0 0 0 5px rgba(167,139,250,0.25);
+}
+input[type=range]::-moz-range-thumb {
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  border: none;
+}
+
+/* segment buttons (blend mode) */
+.seg-group {
+  display: flex;
+  gap: 4px;
+  background: var(--surface);
+  padding: 3px;
+  border-radius: var(--radius-sm);
+}
+.seg-btn {
+  flex: 1;
+  padding: 6px 4px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.15s, color 0.15s;
+}
+.seg-btn.active {
+  background: rgba(167,139,250,0.18);
+  color: var(--accent);
+}
+
+/* duration + fps row */
+.duration-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: end;
+}
+.fps-select {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.fps-select label { font-size: 12px; color: var(--text); }
+.select-styled {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 7px 10px;
+  cursor: pointer;
+  outline: none;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23555878'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 28px;
+}
+.select-styled:focus { border-color: var(--accent); }
+
+/* buttons */
+.btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 11px 18px;
+  border-radius: var(--radius-sm);
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  border: none;
+  width: 100%;
+  letter-spacing: 0.01em;
+}
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-primary {
+  background: linear-gradient(135deg, var(--accent), #7c3aed);
+  color: #fff;
+  box-shadow: 0 4px 20px rgba(167,139,250,0.25);
+}
+.btn-primary:hover:not(:disabled) {
+  box-shadow: 0 4px 28px rgba(167,139,250,0.4);
+  transform: translateY(-1px);
+}
+.btn-secondary {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+.btn-secondary:hover:not(:disabled) {
+  background: var(--surfaceHov);
+  border-color: rgba(255,255,255,0.14);
+}
+.btn-export {
+  background: linear-gradient(135deg, #1a1a2e, #16213e);
+  color: var(--accent2);
+  border: 1px solid rgba(56,189,248,0.2);
+  box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+}
+.btn-export:hover:not(:disabled) {
+  border-color: rgba(56,189,248,0.4);
+  box-shadow: 0 4px 28px rgba(56,189,248,0.15);
+  transform: translateY(-1px);
+}
+
+.btn-icon { font-size: 16px; }
+
+.btn-group { display: flex; flex-direction: column; gap: 8px; }
+
+/* support badge */
+.support-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-family: var(--mono);
+  color: var(--muted);
+  margin-top: 8px;
+}
+.support-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+  flex-shrink: 0;
+}
+.support-dot.warn { background: #fbbf24; }
+.support-dot.err  { background: var(--red); }
+
+/* scrollbar */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+/* hidden file input */
+#fileInput { display: none; }
+
+/* responsive */
+@media (max-width: 900px) {
+  .app {
+    grid-template-columns: 1fr;
+    grid-template-rows: 56px auto auto;
+    grid-template-areas: "header" "canvas" "panel";
+  }
+  .panel { border-left: none; border-top: 1px solid var(--border); }
+  .canvas-area { padding: 16px; }
+}
+</style>
+</head>
+<body>
+
+<input type="file" id="fileInput" accept="image/jpeg,image/png,image/webp">
+
+<div class="app">
+
+  <!-- ===== HEADER ===== -->
+  <header>
+    <div class="logo-mark">VA</div>
+    <div class="logo-text">VisuArt<span> Studio</span></div>
+    <div class="header-badge">WebGL · MP4</div>
+  </header>
+
+  <!-- ===== CANVAS AREA ===== -->
+  <main class="canvas-area">
+    <div class="canvas-wrap">
+      <canvas id="glCanvas" width="1280" height="720"></canvas>
+
+      <!-- Upload overlay (shown before image) -->
+      <div class="canvas-overlay" id="canvasOverlay">
+        <div class="upload-icon">⬆</div>
+        <div class="upload-label">DROP IMAGE HERE</div>
+        <div class="upload-hint">JPG · PNG · WEBP</div>
+      </div>
+
+      <!-- Export progress overlay -->
+      <div class="export-overlay hidden" id="exportOverlay">
+        <div class="export-title">RENDERING FRAMES</div>
+        <div class="progress-bar-wrap">
+          <div class="progress-bar-fill" id="progressFill"></div>
+        </div>
+        <div class="export-status" id="exportStatus">0 / 0 frames</div>
+      </div>
+    </div>
+
+    <!-- Canvas info bar -->
+    <div class="canvas-info">
+      <div class="info-pill" id="statusPill">IDLE</div>
+      <div class="info-pill">1280 × 720</div>
+      <div class="palette-preview" id="palettePreview"></div>
+    </div>
+  </main>
+
+  <!-- ===== RIGHT PANEL ===== -->
+  <aside class="panel">
+
+    <!-- Upload -->
+    <div class="p-section">
+      <div class="p-section-title">Album Art</div>
+      <div class="upload-area" id="uploadArea">
+        <img class="album-thumb" id="albumThumb" alt="Album Art">
+        <div class="upload-area-icon" id="uploadAreaIcon">🎵</div>
+        <div class="upload-area-text" id="uploadAreaText">Click or drag image</div>
+        <div class="upload-area-hint">Colors extracted automatically</div>
+      </div>
+    </div>
+
+    <!-- Visual Controls -->
+    <div class="p-section">
+      <div class="p-section-title">Shader Controls</div>
+
+      <div class="control-row">
+        <div class="control-label">
+          <span>Animation Speed</span>
+          <span class="control-value" id="speedVal">1.0×</span>
+        </div>
+        <input type="range" id="speedSlider" min="0.1" max="3.0" step="0.05" value="1.0">
+      </div>
+
+      <div class="control-row">
+        <div class="control-label">
+          <span>Noise Intensity</span>
+          <span class="control-value" id="noiseVal">0.70</span>
+        </div>
+        <input type="range" id="noiseSlider" min="0.1" max="1.5" step="0.05" value="0.7">
+      </div>
+
+      <div class="control-row">
+        <div class="control-label">
+          <span>Saturation</span>
+          <span class="control-value" id="satVal">1.20</span>
+        </div>
+        <input type="range" id="satSlider" min="0.0" max="2.5" step="0.05" value="1.2">
+      </div>
+
+      <div class="control-row">
+        <div class="control-label">
+          <span>Brightness</span>
+          <span class="control-value" id="brightVal">1.00</span>
+        </div>
+        <input type="range" id="brightSlider" min="0.3" max="1.8" step="0.05" value="1.0">
+      </div>
+
+      <div class="control-row">
+        <div class="control-label"><span>Blend Mode</span></div>
+        <div class="seg-group">
+          <button class="seg-btn active" data-mode="0">SOFT</button>
+          <button class="seg-btn" data-mode="1">VIVID</button>
+          <button class="seg-btn" data-mode="2">DARK</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Export Settings -->
+    <div class="p-section">
+      <div class="p-section-title">Export Settings</div>
+
+      <div class="control-row">
+        <div class="control-label">
+          <span>Duration</span>
+          <span class="control-value" id="durVal">15s</span>
+        </div>
+        <input type="range" id="durSlider" min="5" max="300" step="5" value="15">
+      </div>
+
+      <div class="duration-row">
+        <div class="control-row" style="margin-bottom:0">
+          <div class="control-label"><span>Resolution</span></div>
+          <select class="select-styled" id="resSelect">
+            <option value="720">720p — 1280×720</option>
+            <option value="1080">1080p — 1920×1080</option>
+          </select>
+        </div>
+        <div class="fps-select">
+          <label>FPS</label>
+          <select class="select-styled" id="fpsSelect">
+            <option value="30" selected>30</option>
+            <option value="60">60</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="p-section">
+      <div class="p-section-title">Actions</div>
+      <div class="btn-group">
+        <button class="btn btn-secondary" id="btnUpload">
+          <span class="btn-icon">📁</span> Upload Image
+        </button>
+        <button class="btn btn-primary" id="btnGenerate" disabled>
+          <span class="btn-icon">✦</span> Generate Preview
+        </button>
+        <button class="btn btn-export" id="btnExport" disabled>
+          <span class="btn-icon">⬇</span> Export MP4
+        </button>
+      </div>
+      <div class="support-badge" id="supportBadge">
+        <div class="support-dot warn" id="supportDot"></div>
+        <span id="supportText">Checking WebCodecs support…</span>
+      </div>
+    </div>
+
+  </aside>
+</div>
+
+<!-- ============================================================
+     VERTEX SHADER
+     ============================================================ -->
+<script id="vertexShader" type="x-shader/x-vertex">
+attribute vec2 a_position;
+void main() {
+  gl_Position = vec4(a_position, 0.0, 1.0);
+}
+</script>
+
+<!-- ============================================================
+     FRAGMENT SHADER — Apple Music-style organic gradient
+     Uses: fBm domain warping, simplex noise, palette mixing
+     ============================================================ -->
+<script id="fragmentShader" type="x-shader/x-fragment">
+precision highp float;
+
+// ---- Uniforms ----
+uniform float u_time;           // seconds
+uniform vec2  u_resolution;     // canvas size
+uniform vec3  u_colors[6];      // extracted palette (linear RGB 0-1)
+uniform int   u_numColors;      // how many colors are valid
+uniform float u_speed;          // animation speed multiplier
+uniform float u_noiseIntensity; // warp strength
+uniform float u_saturation;     // 0=grey, 1=original, 2=hyper
+uniform float u_brightness;     // multiplier
+uniform int   u_blendMode;      // 0=soft 1=vivid 2=dark
+
+// ---- Simplex 3D Noise (Stefan Gustavson) ----
+vec3 mod289v3(vec3 x){ return x - floor(x*(1./289.))*289.; }
+vec4 mod289v4(vec4 x){ return x - floor(x*(1./289.))*289.; }
+vec4 permute(vec4 x){ return mod289v4(((x*34.)+1.)*x); }
+vec4 taylorInvSqrt(vec4 r){ return 1.79284291400159 - 0.85373472095314*r; }
+
+float snoise(vec3 v){
+  const vec2 C = vec2(1./6., 1./3.);
+  vec3 i = floor(v + dot(v, C.yyy));
+  vec3 x0 = v - i + dot(i, C.xxx);
+  vec3 g = step(x0.yzx, x0.xyz);
+  vec3 l = 1.0 - g;
+  vec3 i1 = min(g.xyz, l.zxy);
+  vec3 i2 = max(g.xyz, l.zxy);
+  vec3 x1 = x0 - i1 + C.xxx;
+  vec3 x2 = x0 - i2 + C.yyy;
+  vec3 x3 = x0 - vec3(0.5);
+  i = mod289v3(i);
+  vec4 p = permute(permute(permute(
+    i.z + vec4(0.,i1.z,i2.z,1.)) +
+    i.y + vec4(0.,i1.y,i2.y,1.)) +
+    i.x + vec4(0.,i1.x,i2.x,1.));
+  float n_ = 0.142857142857;
+  vec3 ns = n_ * vec3(2.,1.,-1.) - vec3(0.,0.,1.);
+  vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+  vec4 x_ = floor(j * ns.z);
+  vec4 y_ = floor(j - 7.0 * x_);
+  vec4 x = x_ * ns.x + ns.yyyy;
+  vec4 y = y_ * ns.x + ns.yyyy;
+  vec4 h = 1.0 - abs(x) - abs(y);
+  vec4 b0 = vec4(x.xy, y.xy);
+  vec4 b1 = vec4(x.zw, y.zw);
+  vec4 s0 = floor(b0)*2.0+1.0;
+  vec4 s1 = floor(b1)*2.0+1.0;
+  vec4 sh = -step(h, vec4(0.0));
+  vec4 a0 = b0.xzyw + s0.xzyw * sh.xxyy;
+  vec4 a1 = b1.xzyw + s1.xzyw * sh.zzww;
+  vec3 p0 = vec3(a0.xy, h.x);
+  vec3 p1_v = vec3(a0.zw, h.y);
+  vec3 p2 = vec3(a1.xy, h.z);
+  vec3 p3 = vec3(a1.zw, h.w);
+  vec4 norm = taylorInvSqrt(vec4(dot(p0,p0),dot(p1_v,p1_v),dot(p2,p2),dot(p3,p3)));
+  p0*=norm.x; p1_v*=norm.y; p2*=norm.z; p3*=norm.w;
+  vec4 m = max(0.6 - vec4(dot(x0,x0),dot(x1,x1),dot(x2,x2),dot(x3,x3)), 0.0);
+  m = m * m;
+  return 42.0 * dot(m*m, vec4(dot(p0,x0),dot(p1_v,x1),dot(p2,x2),dot(p3,x3)));
+}
+
+// ---- Fractional Brownian Motion (domain warped) ----
+// 5 octaves, rotation matrix keeps patterns from axis-aligning
+float fbm(vec3 p){
+  float v = 0.0, a = 0.5;
+  // simple rotation to avoid axis-aligned artifacts
+  mat2 rot = mat2(cos(0.5), -sin(0.5), sin(0.5), cos(0.5));
+  for(int i=0;i<5;i++){
+    v += a * snoise(p);
+    p.xy = rot * p.xy;
+    p *= 2.1;
+    p += vec3(31.416, 27.183, 14.142); // irrational offsets per octave
+    a *= 0.5;
+  }
+  return v;
+}
+
+// ---- Smooth palette interpolation across all extracted colors ----
+vec3 mixPalette(float t){
+  t = clamp(fract(t + 0.001), 0.0, 1.0);
+  float n = float(u_numColors) - 1.0;
+  float idx = t * n;
+  int i0 = int(floor(idx));
+  int i1 = i0 + 1;
+  float f = smoothstep(0.0, 1.0, fract(idx));
+
+  // GLSL 1.0: no dynamic indexing — use explicit if-else cascade
+  vec3 c0, c1;
+  if(i0==0)      c0=u_colors[0];
+  else if(i0==1) c0=u_colors[1];
+  else if(i0==2) c0=u_colors[2];
+  else if(i0==3) c0=u_colors[3];
+  else if(i0==4) c0=u_colors[4];
+  else           c0=u_colors[5];
+
+  if(i1<=0)      c1=u_colors[0];
+  else if(i1==1) c1=u_colors[1];
+  else if(i1==2) c1=u_colors[2];
+  else if(i1==3) c1=u_colors[3];
+  else if(i1==4) c1=u_colors[4];
+  else           c1=u_colors[5];
+
+  return mix(c0, c1, f);
+}
+
+// ---- Blend mode helpers ----
+vec3 blendScreen(vec3 a, vec3 b){ return 1.0-(1.0-a)*(1.0-b); }
+vec3 blendMultiply(vec3 a, vec3 b){ return a*b; }
+
+void main(){
+  vec2 uv = gl_FragCoord.xy / u_resolution;
+  vec2 st = uv - 0.5;
+  st.x *= u_resolution.x / u_resolution.y; // correct aspect ratio
+
+  float t = u_time * u_speed * 0.25;
+
+  // === Layer 1: Large slow warping blobs ===
+  // Domain warping: sample fbm twice for q, then use q to warp r
+  vec3 q_p = vec3(st * 1.4 + vec2(sin(t*0.31)*0.4, cos(t*0.24)*0.3), t*0.12);
+  float qx = fbm(q_p);
+  float qy = fbm(q_p + vec3(5.718, 2.718, 1.0));
+
+  vec3 r_p = vec3(st + vec2(qx, qy) * u_noiseIntensity, t*0.18 + 1.5);
+  float rx = fbm(r_p + vec3(1.718, 9.141, 0.0));
+  float ry = fbm(r_p + vec3(8.314, 2.718, 3.14));
+
+  // Final compound warp
+  float n1 = fbm(vec3(st + vec2(rx, ry) * u_noiseIntensity * 0.8, t));
+
+  // === Layer 2: Medium speed swirls (adds structure) ===
+  float n2 = fbm(vec3(
+    st * 2.2 + vec2(cos(t*0.57+1.0), sin(t*0.43+2.0)) * 0.25,
+    t*0.22 + 7.3
+  ));
+
+  // === Layer 3: Fine detail shimmer ===
+  float n3 = fbm(vec3(
+    st * 4.5 + vec2(sin(t*0.91+0.5), cos(t*0.78+1.2)) * 0.15,
+    t*0.31 + 14.1
+  ));
+
+  // Weighted combination
+  float combined = n1*0.55 + n2*0.30 + n3*0.15;
+
+  // Gentle sin/cos wave overlay (like Apple Music ripple)
+  float wave = sin(st.x * 2.8 + t*1.8) * 0.028
+             + cos(st.y * 2.1 + t*1.4) * 0.028
+             + sin((st.x + st.y) * 1.6 + t*2.2) * 0.018;
+  combined += wave;
+
+  // Remap [-0.7..0.7] → [0..1]
+  float colorT = combined * 0.5 + 0.5;
+  colorT = clamp(colorT, 0.0, 1.0);
+
+  // Get color from extracted palette
+  vec3 color = mixPalette(colorT);
+
+  // Apply blend mode
+  if(u_blendMode == 1){
+    // Vivid: screen with a shifted version
+    vec3 c2 = mixPalette(fract(colorT + 0.33));
+    color = blendScreen(color, c2 * 0.4);
+  } else if(u_blendMode == 2){
+    // Dark: multiply keeps shadows deep
+    vec3 c2 = mixPalette(fract(colorT + 0.5));
+    color = blendMultiply(color, c2 * 1.4);
+  }
+
+  // Saturation adjustment
+  float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
+  color = mix(vec3(luma), color, u_saturation);
+
+  // Brightness
+  color *= u_brightness;
+
+  // Soft vignette (darkens edges slightly)
+  float vign = 1.0 - smoothstep(0.35, 1.1, length(st * vec2(0.9, 1.1)));
+  color *= mix(0.72, 1.0, vign);
+
+  gl_FragColor = vec4(clamp(color, 0.0, 1.0), 1.0);
+}
+</script>
+
+<script>
+/* ============================================================
+   SECTION 1 — WebGL Utilities
+   ============================================================ */
+
+/** Compile a single GLSL shader */
+function compileShader(gl, type, source) {
+  const shader = gl.createShader(type);
+  gl.shaderSource(shader, source);
+  gl.compileShader(shader);
+  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+    console.error('Shader compile error:', gl.getShaderInfoLog(shader));
+    gl.deleteShader(shader);
+    return null;
+  }
+  return shader;
+}
+
+/** Link vertex + fragment shaders into a program */
+function createProgram(gl, vertSrc, fragSrc) {
+  const vert = compileShader(gl, gl.VERTEX_SHADER, vertSrc);
+  const frag = compileShader(gl, gl.FRAGMENT_SHADER, fragSrc);
+  if (!vert || !frag) return null;
+  const prog = gl.createProgram();
+  gl.attachShader(prog, vert);
+  gl.attachShader(prog, frag);
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+    console.error('Program link error:', gl.getProgramInfoLog(prog));
+    return null;
+  }
+  return prog;
+}
+
+/* ============================================================
+   SECTION 2 — Color Extraction (K-Means Clustering)
+   ============================================================ */
+
+/**
+ * Compute squared Euclidean distance between two RGB colors
+ * @param {number[]} a [r,g,b] each in [0,1]
+ * @param {number[]} b [r,g,b]
+ */
+function colorDist2(a, b) {
+  return (a[0]-b[0])**2 + (a[1]-b[1])**2 + (a[2]-b[2])**2;
+}
+
+/**
+ * K-Means++ initialisation + clustering on RGB pixels
+ * @param {number[][]} pixels  Array of [r,g,b] in [0,1]
+ * @param {number}     k       Number of clusters
+ * @returns {number[][]}       Sorted cluster centroids
+ */
+function kMeans(pixels, k = 6, maxIter = 60) {
+  if (pixels.length === 0) return [];
+
+  // --- K-Means++ seed selection ---
+  const centroids = [pixels[Math.floor(Math.random() * pixels.length)]];
+  const sample = pixels.length > 2000
+    ? pixels.filter((_, i) => i % Math.floor(pixels.length / 2000) === 0)
+    : pixels;
+
+  while (centroids.length < k) {
+    // Pick next centroid with probability proportional to nearest-centroid distance²
+    let totalDist = 0;
+    const dists = sample.map(p => {
+      const d = Math.min(...centroids.map(c => colorDist2(p, c)));
+      totalDist += d;
+      return d;
+    });
+    let rand = Math.random() * totalDist;
+    let chosen = sample[sample.length - 1];
+    for (let i = 0; i < sample.length; i++) {
+      rand -= dists[i];
+      if (rand <= 0) { chosen = sample[i]; break; }
+    }
+    centroids.push([...chosen]);
+  }
+
+  // --- Iteration ---
+  for (let iter = 0; iter < maxIter; iter++) {
+    const clusters = Array.from({ length: k }, () => []);
+    for (const p of pixels) {
+      let minD = Infinity, minI = 0;
+      for (let i = 0; i < k; i++) {
+        const d = colorDist2(p, centroids[i]);
+        if (d < minD) { minD = d; minI = i; }
+      }
+      clusters[minI].push(p);
+    }
+
+    let changed = false;
+    for (let i = 0; i < k; i++) {
+      if (!clusters[i].length) continue;
+      const newC = [0, 0, 0];
+      for (const p of clusters[i]) { newC[0]+=p[0]; newC[1]+=p[1]; newC[2]+=p[2]; }
+      newC[0] /= clusters[i].length;
+      newC[1] /= clusters[i].length;
+      newC[2] /= clusters[i].length;
+      if (colorDist2(newC, centroids[i]) > 1e-6) changed = true;
+      centroids[i] = newC;
+    }
+    if (!changed) break;
+  }
+
+  // Sort by saturation descending (most vibrant first, good for Apple Music style)
+  return centroids.sort((a, b) => {
+    const satA = Math.max(...a) - Math.min(...a);
+    const satB = Math.max(...b) - Math.min(...b);
+    return satB - satA;
+  });
+}
+
+/**
+ * Extract dominant colors from an HTMLImageElement
+ * @param {HTMLImageElement} img
+ * @param {number} numColors
+ * @returns {number[][]} array of [r,g,b] each in [0,1]
+ */
+function extractColors(img, numColors = 6) {
+  const SIZE = 80; // small proxy canvas for speed
+  const c = document.createElement('canvas');
+  c.width = c.height = SIZE;
+  const ctx = c.getContext('2d');
+  ctx.drawImage(img, 0, 0, SIZE, SIZE);
+  const { data } = ctx.getImageData(0, 0, SIZE, SIZE);
+
+  const pixels = [];
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i+3] < 128) continue; // skip transparent
+    // Convert sRGB uint8 → linear-ish float (simple gamma 2.2 decode)
+    pixels.push([
+      (data[i]   / 255) ** 2.2,
+      (data[i+1] / 255) ** 2.2,
+      (data[i+2] / 255) ** 2.2
+    ]);
+  }
+  return kMeans(pixels, numColors);
+}
+
+/* ============================================================
+   SECTION 3 — WebGL Renderer
+   ============================================================ */
+
+class ShaderRenderer {
+  constructor(canvas) {
+    this.canvas = canvas;
+    this.gl = canvas.getContext('webgl', {
+      preserveDrawingBuffer: true,  // needed for VideoFrame / toBlob
+      antialias: false,
+      alpha: false
+    });
+    if (!this.gl) throw new Error('WebGL not supported');
+
+    this._compileShaders();
+    this._buildGeometry();
+    this._cacheUniforms();
+
+    // default values
+    this.colors = [
+      [0.2, 0.1, 0.5],
+      [0.5, 0.1, 0.7],
+      [0.8, 0.3, 0.4],
+      [0.3, 0.5, 0.9],
+      [0.1, 0.7, 0.6],
+      [0.9, 0.6, 0.2]
+    ];
+    this.numColors = 6;
+    this.speed = 1.0;
+    this.noiseIntensity = 0.7;
+    this.saturation = 1.2;
+    this.brightness = 1.0;
+    this.blendMode = 0;
+  }
+
+  _compileShaders() {
+    const vertSrc = document.getElementById('vertexShader').textContent;
+    const fragSrc = document.getElementById('fragmentShader').textContent;
+    this.program = createProgram(this.gl, vertSrc, fragSrc);
+    if (!this.program) throw new Error('Shader compilation failed');
+    this.gl.useProgram(this.program);
+  }
+
+  _buildGeometry() {
+    const gl = this.gl;
+    // Full-screen quad as two triangles (clip space -1..1)
+    const verts = new Float32Array([
+      -1, -1,  1, -1,  -1, 1,
+      -1,  1,  1, -1,   1, 1
+    ]);
+    this.vbo = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.vbo);
+    gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STATIC_DRAW);
+
+    const posLoc = gl.getAttribLocation(this.program, 'a_position');
+    gl.enableVertexAttribArray(posLoc);
+    gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
+  }
+
+  _cacheUniforms() {
+    const gl = this.gl;
+    const p = this.program;
+    this.u = {
+      time:      gl.getUniformLocation(p, 'u_time'),
+      resolution:gl.getUniformLocation(p, 'u_resolution'),
+      numColors: gl.getUniformLocation(p, 'u_numColors'),
+      speed:     gl.getUniformLocation(p, 'u_speed'),
+      noise:     gl.getUniformLocation(p, 'u_noiseIntensity'),
+      sat:       gl.getUniformLocation(p, 'u_saturation'),
+      bright:    gl.getUniformLocation(p, 'u_brightness'),
+      blend:     gl.getUniformLocation(p, 'u_blendMode'),
+      // Color array: 6 vec3 uniforms
+      colors:    Array.from({length: 6}, (_, i) =>
+        gl.getUniformLocation(p, `u_colors[${i}]`))
+    };
+  }
+
+  /** Upload all uniforms except time */
+  _uploadStaticUniforms() {
+    const gl = this.gl;
+    const { u } = this;
+    gl.uniform2f(u.resolution, this.canvas.width, this.canvas.height);
+    gl.uniform1i(u.numColors, this.numColors);
+    gl.uniform1f(u.speed, this.speed);
+    gl.uniform1f(u.noise, this.noiseIntensity);
+    gl.uniform1f(u.sat, this.saturation);
+    gl.uniform1f(u.bright, this.brightness);
+    gl.uniform1i(u.blend, this.blendMode);
+
+    // Upload up to 6 colors
+    for (let i = 0; i < 6; i++) {
+      const c = this.colors[i] || [0, 0, 0];
+      gl.uniform3f(u.colors[i], c[0], c[1], c[2]);
+    }
+  }
+
+  /** Render a single frame at the given time (seconds) */
+  renderFrame(timeSec) {
+    const gl = this.gl;
+    gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+    this._uploadStaticUniforms();
+    gl.uniform1f(this.u.time, timeSec);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+    gl.flush();
+  }
+
+  setColors(colorsArr) {
+    this.colors = colorsArr.slice(0, 6);
+    this.numColors = this.colors.length;
+    // Pad to 6 if fewer
+    while (this.colors.length < 6) this.colors.push([0, 0, 0]);
+  }
+}
+
+/* ============================================================
+   SECTION 4 — Animation Loop
+   ============================================================ */
+
+class AnimationController {
+  constructor(renderer) {
+    this.renderer = renderer;
+    this.running = false;
+    this.startTime = null;
+    this.raf = null;
+  }
+
+  start() {
+    if (this.running) return;
+    this.running = true;
+    this.startTime = performance.now();
+    this._tick();
+  }
+
+  stop() {
+    this.running = false;
+    if (this.raf) { cancelAnimationFrame(this.raf); this.raf = null; }
+  }
+
+  _tick() {
+    if (!this.running) return;
+    const elapsed = (performance.now() - this.startTime) / 1000;
+    this.renderer.renderFrame(elapsed);
+    this.raf = requestAnimationFrame(() => this._tick());
+  }
+}
+
+/* ============================================================
+   SECTION 5 — Video Exporter
+   Strategy A: VideoEncoder (WebCodecs) + mp4-muxer → true H.264 MP4
+   Strategy B: MediaRecorder → WebM/WebP fallback
+   ============================================================ */
+
+class VideoExporter {
+  constructor(renderer) {
+    this.renderer = renderer;
+    this.aborting = false;
+
+    // Detect which export path is available
+    this.hasWebCodecs = (typeof VideoEncoder !== 'undefined');
+    this.hasMp4Muxer = (typeof Mp4Muxer !== 'undefined');
+    this.canExportMP4 = this.hasWebCodecs && this.hasMp4Muxer;
+  }
+
+  /**
+   * Export an MP4 using WebCodecs + mp4-muxer (offline frame-by-frame)
+   * @param {object} opts { durationSec, fps, width, height, onProgress, onStatus }
+   */
+  async exportMP4(opts) {
+    const { durationSec, fps, width, height, onProgress, onStatus } = opts;
+    const canvas = this.renderer.canvas;
+    const totalFrames = Math.ceil(durationSec * fps);
+    const frameDuration = 1_000_000 / fps; // microseconds per frame
+
+    onStatus('Checking encoder support…');
+
+    // Check codec support
+    const codecConfig = {
+      codec: 'avc1.42001f', // H.264 Baseline L3.1
+      width, height,
+      bitrate: width >= 1920 ? 12_000_000 : 8_000_000,
+      framerate: fps,
+      latencyMode: 'quality'
+    };
+
+    let supported = false;
+    try {
+      const result = await VideoEncoder.isConfigSupported(codecConfig);
+      supported = result.supported;
+    } catch(e) { supported = false; }
+
+    if (!supported) {
+      // Try High Profile
+      codecConfig.codec = 'avc1.640034';
+      try {
+        const r2 = await VideoEncoder.isConfigSupported(codecConfig);
+        supported = r2.supported;
+      } catch(e) {}
+    }
+
+    if (!supported) {
+      onStatus('H.264 not supported — falling back to WebM');
+      return this.exportWebM(opts);
+    }
+
+    onStatus('Setting up mp4-muxer…');
+
+    // Resize canvas to export dimensions
+    const prevW = canvas.width, prevH = canvas.height;
+    canvas.width  = width;
+    canvas.height = height;
+
+    // Create muxer
+    const muxer = new Mp4Muxer.Muxer({
+      target: new Mp4Muxer.ArrayBufferTarget(),
+      video: { codec: 'avc', width, height },
+      fastStart: 'in-memory'
+    });
+
+    // Create encoder
+    const encoder = new VideoEncoder({
+      output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+      error: (err) => { console.error('VideoEncoder error:', err); }
+    });
+    encoder.configure(codecConfig);
+
+    onStatus('Rendering frames…');
+
+    for (let i = 0; i < totalFrames; i++) {
+      if (this.aborting) break;
+
+      const timeSec = i / fps;
+      this.renderer.renderFrame(timeSec);
+
+      const timestamp = Math.round(i * frameDuration);
+      const frame = new VideoFrame(canvas, { timestamp });
+      const keyFrame = (i === 0) || (i % (fps * 2) === 0);
+      encoder.encode(frame, { keyFrame });
+      frame.close();
+
+      onProgress(i / totalFrames);
+      onStatus(`Encoding frame ${i+1} / ${totalFrames}`);
+
+      // Yield every 15 frames so the UI stays responsive
+      if (i % 15 === 0) await new Promise(r => setTimeout(r, 0));
+    }
+
+    onStatus('Finalizing…');
+    await encoder.flush();
+    encoder.close();
+    muxer.finalize();
+
+    // Restore canvas size
+    canvas.width  = prevW;
+    canvas.height = prevH;
+
+    if (this.aborting) { this.aborting = false; onStatus('Aborted'); return; }
+
+    const { buffer } = muxer.target;
+    this._downloadBlob(new Blob([buffer], { type: 'video/mp4' }), 'visualart-export.mp4');
+    onStatus('✓ MP4 downloaded');
+    onProgress(1);
+  }
+
+  /**
+   * Fallback: MediaRecorder → WebM
+   */
+  async exportWebM(opts) {
+    const { durationSec, fps, onProgress, onStatus } = opts;
+    const canvas = this.renderer.canvas;
+
+    onStatus('Recording with MediaRecorder…');
+    const stream = canvas.captureStream(fps);
+    const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
+      ? 'video/webm;codecs=vp9' : 'video/webm;codecs=vp8';
+    const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 8_000_000 });
+    const chunks = [];
+    rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+
+    rec.start(100);
+
+    const startT = performance.now();
+    const totalMs = durationSec * 1000;
+    const startSec = performance.now() / 1000;
+
+    await new Promise(resolve => {
+      const tick = () => {
+        if (this.aborting) { rec.stop(); resolve(); return; }
+        const elapsed = performance.now() - startT;
+        const timeSec = (performance.now() / 1000) - startSec + elapsed / 1000;
+        this.renderer.renderFrame(timeSec / 2); // play-back speed
+        onProgress(elapsed / totalMs);
+        if (elapsed < totalMs) requestAnimationFrame(tick);
+        else resolve();
+      };
+      requestAnimationFrame(tick);
+    });
+
+    rec.stop();
+    await new Promise(r => { rec.onstop = r; });
+
+    this._downloadBlob(new Blob(chunks, { type: mime }), 'visualart-export.webm');
+    onStatus('✓ WebM downloaded (rename to .mp4 or convert with Handbrake)');
+    onProgress(1);
+  }
+
+  _downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  }
+}
+
+/* ============================================================
+   SECTION 6 — Main Application Controller
+   ============================================================ */
+
+class App {
+  constructor() {
+    this._bindElements();
+    this._initWebGL();
+    this._initExporter();
+    this._bindEvents();
+    this._syncSliders();
+    this._checkSupport();
+    this._startIdleAnimation();
+  }
+
+  _bindElements() {
+    this.canvas       = document.getElementById('glCanvas');
+    this.fileInput    = document.getElementById('fileInput');
+    this.canvasOverlay= document.getElementById('canvasOverlay');
+    this.exportOverlay= document.getElementById('exportOverlay');
+    this.progressFill = document.getElementById('progressFill');
+    this.exportStatus = document.getElementById('exportStatus');
+    this.statusPill   = document.getElementById('statusPill');
+    this.palettePreview=document.getElementById('palettePreview');
+    this.albumThumb   = document.getElementById('albumThumb');
+    this.uploadArea   = document.getElementById('uploadArea');
+    this.uploadAreaIcon=document.getElementById('uploadAreaIcon');
+    this.uploadAreaText=document.getElementById('uploadAreaText');
+    this.btnUpload    = document.getElementById('btnUpload');
+    this.btnGenerate  = document.getElementById('btnGenerate');
+    this.btnExport    = document.getElementById('btnExport');
+    this.supportDot   = document.getElementById('supportDot');
+    this.supportText  = document.getElementById('supportText');
+    this.supportBadge = document.getElementById('supportBadge');
+
+    // Sliders
+    this.speedSlider  = document.getElementById('speedSlider');
+    this.noiseSlider  = document.getElementById('noiseSlider');
+    this.satSlider    = document.getElementById('satSlider');
+    this.brightSlider = document.getElementById('brightSlider');
+    this.durSlider    = document.getElementById('durSlider');
+    this.resSelect    = document.getElementById('resSelect');
+    this.fpsSelect    = document.getElementById('fpsSelect');
+
+    // Value labels
+    this.speedVal  = document.getElementById('speedVal');
+    this.noiseVal  = document.getElementById('noiseVal');
+    this.satVal    = document.getElementById('satVal');
+    this.brightVal = document.getElementById('brightVal');
+    this.durVal    = document.getElementById('durVal');
+  }
+
+  _initWebGL() {
+    this.renderer = new ShaderRenderer(this.canvas);
+    this.anim = new AnimationController(this.renderer);
+  }
+
+  _initExporter() {
+    this.exporter = new VideoExporter(this.renderer);
+    this.isExporting = false;
+  }
+
+  _checkSupport() {
+    if (this.exporter.canExportMP4) {
+      this.supportDot.className = 'support-dot';
+      this.supportText.textContent = 'WebCodecs + mp4-muxer → True MP4 export';
+    } else if (this.exporter.hasWebCodecs && !this.exporter.hasMp4Muxer) {
+      this.supportDot.className = 'support-dot warn';
+      this.supportText.textContent = 'mp4-muxer unavailable → WebM fallback';
+    } else {
+      this.supportDot.className = 'support-dot warn';
+      this.supportText.textContent = 'WebCodecs unavailable → WebM fallback';
+    }
+  }
+
+  _bindEvents() {
+    // Upload triggers
+    this.btnUpload.addEventListener('click', () => this.fileInput.click());
+    this.uploadArea.addEventListener('click', () => this.fileInput.click());
+    this.canvasOverlay.addEventListener('click', () => this.fileInput.click());
+    this.fileInput.addEventListener('change', e => {
+      if (e.target.files[0]) this._loadImage(e.target.files[0]);
+    });
+
+    // Drag-and-drop on canvas
+    this.canvas.parentElement.addEventListener('dragover', e => { e.preventDefault(); });
+    this.canvas.parentElement.addEventListener('drop', e => {
+      e.preventDefault();
+      const file = e.dataTransfer.files[0];
+      if (file && file.type.startsWith('image/')) this._loadImage(file);
+    });
+
+    // Sliders → renderer
+    this.speedSlider.addEventListener('input', () => {
+      const v = parseFloat(this.speedSlider.value);
+      this.renderer.speed = v;
+      this.speedVal.textContent = v.toFixed(2) + '×';
+    });
+    this.noiseSlider.addEventListener('input', () => {
+      const v = parseFloat(this.noiseSlider.value);
+      this.renderer.noiseIntensity = v;
+      this.noiseVal.textContent = v.toFixed(2);
+    });
+    this.satSlider.addEventListener('input', () => {
+      const v = parseFloat(this.satSlider.value);
+      this.renderer.saturation = v;
+      this.satVal.textContent = v.toFixed(2);
+    });
+    this.brightSlider.addEventListener('input', () => {
+      const v = parseFloat(this.brightSlider.value);
+      this.renderer.brightness = v;
+      this.brightVal.textContent = v.toFixed(2);
+    });
+    this.durSlider.addEventListener('input', () => {
+      const v = parseInt(this.durSlider.value);
+      this.durVal.textContent = v >= 60
+        ? `${Math.floor(v/60)}m ${v%60 ? v%60+'s' : ''}`.trim()
+        : v + 's';
+    });
+
+    // Blend mode buttons
+    document.querySelectorAll('.seg-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.seg-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        this.renderer.blendMode = parseInt(btn.dataset.mode);
+      });
+    });
+
+    // Generate Preview
+    this.btnGenerate.addEventListener('click', () => {
+      this._startPreview();
+    });
+
+    // Export
+    this.btnExport.addEventListener('click', () => {
+      if (!this.isExporting) this._startExport();
+    });
+  }
+
+  _syncSliders() {
+    // Trigger once to set labels
+    this.speedSlider.dispatchEvent(new Event('input'));
+    this.noiseSlider.dispatchEvent(new Event('input'));
+    this.satSlider.dispatchEvent(new Event('input'));
+    this.brightSlider.dispatchEvent(new Event('input'));
+    this.durSlider.dispatchEvent(new Event('input'));
+  }
+
+  /** Load and process an image file */
+  _loadImage(file) {
+    const reader = new FileReader();
+    reader.onload = e => {
+      const img = new Image();
+      img.onload = () => {
+        this._processImage(img);
+      };
+      img.src = e.target.result;
+
+      // Show thumbnail
+      this.albumThumb.src = e.target.result;
+      this.albumThumb.classList.add('visible');
+      this.uploadAreaIcon.style.display = 'none';
+      this.uploadAreaText.textContent = file.name;
+      this.uploadArea.classList.add('has-image');
+    };
+    reader.readAsDataURL(file);
+  }
+
+  /** Extract colors, update renderer, start preview */
+  _processImage(img) {
+    this._setStatus('Extracting colors…', false);
+
+    // Run color extraction (async-ish via rAF to not block)
+    requestAnimationFrame(() => {
+      const palette = extractColors(img, 6);
+      this.renderer.setColors(palette);
+      this._renderPaletteSwatches(palette);
+
+      // Hide upload overlay
+      this.canvasOverlay.classList.add('hidden');
+
+      // Enable buttons
+      this.btnGenerate.disabled = false;
+      this.btnExport.disabled = false;
+
+      this._setStatus('READY', true);
+      this._startPreview();
+    });
+  }
+
+  /** Render palette color swatches in the info bar */
+  _renderPaletteSwatches(palette) {
+    this.palettePreview.innerHTML = '';
+    palette.forEach(c => {
+      const [r, g, b] = c.map(v => Math.round(Math.min(255, v ** (1/2.2) * 255)));
+      const swatch = document.createElement('div');
+      swatch.className = 'palette-swatch';
+      swatch.style.background = `rgb(${r},${g},${b})`;
+      swatch.title = `rgb(${r},${g},${b})`;
+      this.palettePreview.appendChild(swatch);
+    });
+  }
+
+  /** Start the realtime preview animation */
+  _startPreview() {
+    this.anim.stop();
+    this.anim.start();
+    this._setStatus('LIVE PREVIEW', true);
+  }
+
+  /** Start offline MP4 export */
+  async _startExport() {
+    if (this.isExporting) return;
+    this.isExporting = true;
+
+    this.anim.stop();
+
+    const fps      = parseInt(this.fpsSelect.value);
+    const res      = parseInt(this.resSelect.value);
+    const width    = res === 1080 ? 1920 : 1280;
+    const height   = res === 1080 ? 1080 : 720;
+    const dur      = parseInt(this.durSlider.value);
+
+    this.exportOverlay.classList.remove('hidden');
+    this.btnExport.disabled = true;
+    this.btnGenerate.disabled = true;
+
+    try {
+      if (this.exporter.canExportMP4) {
+        await this.exporter.exportMP4({
+          durationSec: dur,
+          fps, width, height,
+          onProgress: p => {
+            this.progressFill.style.width = (p * 100) + '%';
+          },
+          onStatus: s => {
+            this.exportStatus.textContent = s;
+          }
+        });
+      } else {
+        await this.exporter.exportWebM({
+          durationSec: dur,
+          fps, width, height,
+          onProgress: p => {
+            this.progressFill.style.width = (p * 100) + '%';
+          },
+          onStatus: s => {
+            this.exportStatus.textContent = s;
+          }
+        });
+      }
+    } catch(err) {
+      console.error('Export failed:', err);
+      this.exportStatus.textContent = '✗ Export failed: ' + err.message;
+    } finally {
+      // Always restore state
+      setTimeout(() => {
+        this.exportOverlay.classList.add('hidden');
+        this.progressFill.style.width = '0%';
+        this.isExporting = false;
+        this.btnExport.disabled = false;
+        this.btnGenerate.disabled = false;
+
+        // Restore canvas to 1280×720
+        this.canvas.width  = 1280;
+        this.canvas.height = 720;
+
+        this._startPreview();
+      }, 2000);
+    }
+  }
+
+  /** Idle gradient animation before any image is loaded */
+  _startIdleAnimation() {
+    // Default colors (deep space purple palette)
+    this.renderer.setColors([
+      [0.05, 0.02, 0.18],
+      [0.22, 0.08, 0.45],
+      [0.45, 0.12, 0.60],
+      [0.15, 0.30, 0.65],
+      [0.05, 0.45, 0.55],
+      [0.30, 0.08, 0.38]
+    ]);
+    this.anim.start();
+  }
+
+  _setStatus(text, active) {
+    this.statusPill.textContent = text;
+    this.statusPill.className = 'info-pill' + (active ? ' active' : '');
+  }
+}
+
+// ============================================================
+// BOOT
+// ============================================================
+window.addEventListener('DOMContentLoaded', () => {
+  try {
+    window._app = new App();
+  } catch(err) {
+    console.error('VisuArt failed to init:', err);
+    document.body.innerHTML = `<div style="color:#f87171;padding:40px;font-family:monospace">
+      ⚠ WebGL not available in this browser.<br>${err.message}
+    </div>`;
+  }
+});
+</script>
+</body>
+</html>
